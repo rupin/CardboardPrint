@@ -203,11 +203,12 @@ def saveCurrentPath(lpathArray):
     #print (lpathArray)
     paths=len(lpathArray)
      # the first corodinate is always a move and comes from a G0 command.
-    
+    split=True
     if(paths==2): # just a G0 command, we can dopuble the array in size to allow splitting it ahead in two parts
         lpathArray=lpathArray*2
         paths=len(lpathArray)
-       # print(paths)
+        split=False
+        #print(paths)
     
     
     splitArray=[] 
@@ -215,30 +216,85 @@ def saveCurrentPath(lpathArray):
 
    
     splitArray=np.array_split(lpathArray, 2)
-        
+    #print("**Printing Path Arrays")     
     #print(lpathArray)
+    #print("**Printing Split Arrays")
     #print(splitArray)
 
     # when the array is split in two halves, if the number of elements in the parts is 
     # odd, the XY combinations have to be even. Check if the number of elements in the split is odd.
+    #print("The Length of the Path Array is  {}".format(len(patharray)))
+    traceArray0=[]
+    traceArray1=[]
+    if(split):
 
-    #If they are odd, just remove the first element from second part, and add it at the end of the first part. 
-    # To make a wider gap in the path, also ignore the first couple of XY coordinates in the second half. 
+        #If they are odd, just remove the first element from second part, and add it at the end of the first part. 
+        # To make a wider gap in the path, also ignore the first couple of XY coordinates in the second half. 
+        
+        #print(splitArray)
+        if(len(splitArray[0])%2==1):           
 
-    if(len(splitArray[0])%2==1):
+            splitArray[0]=np.append(splitArray[0], splitArray[1][0]) # take the first element from second part and put at end of first
+            splitArray[1]=splitArray[1][1:] # 
 
-        splitArray[0]=np.append(splitArray[0], splitArray[1][0]) # take the first element from second part and put at end of first
-        splitArray[1]=splitArray[1][3:] # 
+            
 
-    #print(len(splitArray[0]))
-    #print(len(splitArray[1]))
-    
+
+
+        
+        traceArray0.append(splitArray[0][-4])
+        traceArray0.append(splitArray[0][-3])        
+        traceArray0.append(splitArray[0][-2])
+        traceArray0.append(splitArray[0][-1])   
+        traceArray0.append(splitArray[1][0]) 
+        traceArray0.append(splitArray[1][1])           
+        traceArray0.append(splitArray[1][2]) 
+        traceArray0.append(splitArray[1][3]) 
+
+
+        traceArray1.append(splitArray[1][-4])
+        traceArray1.append(splitArray[1][-3])        
+        traceArray1.append(splitArray[1][-2])
+        traceArray1.append(splitArray[1][-1])   
+        traceArray1.append(splitArray[0][0]) 
+        traceArray1.append(splitArray[0][1])         
+        
+
+
+
+        splitArray[0]=splitArray[0][:-2] # take the first element from second part and put at end of first
+        splitArray[1]=splitArray[1][2:] # 
+
+        #print("Printing Split Arrays after Manipulation")
+        #print("First Part of the split is {} elements long".format(len(splitArray[0])))
+        #print("Second Part of the split is {} elements long".format(len(splitArray[1])))
+        #print(splitArray[1])
+        #print("Printing Trace Arrays")
+        #print(traceArray)
+
+
     for subArray in splitArray:
         
         subArray[0]="M"+subArray[0]
         pathcoordinates=",".join(subArray) # create a comma seperated path string
-        pathcoordinates=pathcoordinates #Adding a Z makes the path closed with the first point in the path
+        pathcoordinates=pathcoordinates  #Adding a Z makes the path closed with the first point in the path
         dwg.add(dwg.path( d=pathcoordinates, stroke="#000", fill="none", stroke_width=1))
+
+
+    # Added Red lines for just tracing with a laser, no cut required. 
+    if(len(traceArray0)>0):
+        traceArray0[0]="M"+traceArray0[0]
+        pathcoordinates=",".join(traceArray0) # create a comma seperated path string
+        pathcoordinates=pathcoordinates  #Adding a Z makes the path closed with the first point in the path
+        dwg.add(dwg.path( d=pathcoordinates, stroke="#F00", fill="none", stroke_width=1))
+    
+    if(len(traceArray1)>0):
+        traceArray1[0]="M"+traceArray1[0]
+        pathcoordinates=",".join(traceArray1) # create a comma seperated path string
+        pathcoordinates=pathcoordinates  #Adding a Z makes the path closed with the first point in the path
+        dwg.add(dwg.path( d=pathcoordinates, stroke="#F00", fill="none", stroke_width=1))
+
+        
     
     if(area > largeAreaThreshold): # only add text if area is above the threashold. 
         centroidx, centroidy=findCentroid(lpathArray) # computer the weighted center of the enclosed path
