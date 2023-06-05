@@ -2,13 +2,14 @@ import re
 
 import svgwrite
 import os
+import math
 
 import numpy as np
 
-filename="dragon" # just add the name of the file, not including the gcode extension
+filename="HugeDragon" # just add the name of the file, not including the gcode extension
 
 #scaleFactor=3.543307 # see https://svgwrite.readthedocs.io/en/latest/overview.html#units
-scaleFactor=3.81 # see https://svgwrite.readthedocs.io/en/latest/overview.html#units
+scaleFactor=3.831070 # see https://svgwrite.readthedocs.io/en/latest/overview.html#units
 largeAreaThreshold=1500 # if the enclosed area of the layer is less than this value, then no layer number is printed. 
 smallAreaThreshold=100
 dwg=None
@@ -32,6 +33,10 @@ shapeMinX=10000
 
 shapeMaxY=0
 shapeMinY=1000
+
+maxAreaLayer=0
+maxArea=0
+metaDataFile=None
 
 
 
@@ -132,12 +137,24 @@ def calculateSmallestBoundingBoxExtents(linstructions):
                 if(yVal<lshapeMinY):
                     lshapeMinY=yVal;
         
-                #print("{},{},{},{}".format(lshapeMinX,lshapeMaxX,lshapeMinY,lshapeMaxY))
+            
+
+
+        boundingBoxWidthmm=math.ceil(lshapeMaxX-lshapeMinX)
+        boundingBoxHeightmm=math.ceil(lshapeMaxY-lshapeMinY)
+
+        boundingBoxWidthin=math.ceil(boundingBoxWidthmm/25.4)
+        boundingBoxHeightin=math.ceil(boundingBoxHeightmm/25.4)
+
+        # boundingBoxWidthmm=lshapeMaxX-lshapeMinX
+        # boundingBoxHeightmm=lshapeMaxY-lshapeMinY
+
+        # boundingBoxWidthin=boundingBoxWidthmm/25.4
+        # boundingBoxHeightin=boundingBoxHeightmm/25.4
 
 
         
-
-
+        
         printEndedMatch=re.match(printEndedPattern, linstruction)
 
         if printEndedMatch: # This is the Exit conditiopn, as the end of the print has been reached
@@ -179,7 +196,12 @@ def calculateSmallestBoundingBoxExtents(linstructions):
             lpathArray[0]="M"+lpathArray[0] # the first corodinate is always a move and comes from a G0 command.
 
             lpathcoordinates=",".join(lpathArray) # create a comma seperated path string
-            lpathcoordinates=lpathcoordinates+" Z" #Adding a Z makes the path closed with the first point in the path       
+            lpathcoordinates=lpathcoordinates+" Z" #Adding a Z makes the path closed with the first point in the path 
+            metaDataFile.write ("Bounding Box Dimensions:\n")
+            metaDataFile.write("{}mm Width X {}mm Height \n".format(boundingBoxWidthmm,boundingBoxHeightmm ))  
+            metaDataFile.write("{}in Width X {}in Height \n".format(boundingBoxWidthin, boundingBoxHeightin ))  
+            
+            
             return lpathcoordinates   
 
 
@@ -198,6 +220,10 @@ def saveCurrentPath(lpathArray):
     # because if the area is too small, no point writing the layer number in it
     #print(patharray)
     area=computerArea(lpathArray)
+    global maxArea, maxAreaLayer
+    if(area>maxArea):
+        maxArea=area
+        maxAreaLayer=layerNumber
     # if(area>0):
     #     print ("Area is {} sq.mm .".format(area))
     #print (lpathArray)
@@ -231,7 +257,7 @@ def saveCurrentPath(lpathArray):
         #If they are odd, just remove the first element from second part, and add it at the end of the first part. 
         # To make a wider gap in the path, also ignore the first couple of XY coordinates in the second half. 
         
-        #print(splitArray)
+        
         if(len(splitArray[0])%2==1):           
 
             splitArray[0]=np.append(splitArray[0], splitArray[1][0]) # take the first element from second part and put at end of first
@@ -242,18 +268,25 @@ def saveCurrentPath(lpathArray):
 
 
         
-        traceArray0.append(splitArray[0][-4])
-        traceArray0.append(splitArray[0][-3])        
+        print(splitArray)
+
+        if(len(splitArray[0])>2):
+            traceArray0.append(splitArray[0][-4])
+            traceArray0.append(splitArray[0][-3]) 
+
         traceArray0.append(splitArray[0][-2])
         traceArray0.append(splitArray[0][-1])   
         traceArray0.append(splitArray[1][0]) 
-        traceArray0.append(splitArray[1][1])           
-        traceArray0.append(splitArray[1][2]) 
-        traceArray0.append(splitArray[1][3]) 
+        traceArray0.append(splitArray[1][1])  
 
+        if(len(splitArray[1])>2):          
+            traceArray0.append(splitArray[1][2]) 
+            traceArray0.append(splitArray[1][3]) 
 
-        traceArray1.append(splitArray[1][-4])
-        traceArray1.append(splitArray[1][-3])        
+        if(len(splitArray[1])>2):   
+            traceArray1.append(splitArray[1][-4])
+            traceArray1.append(splitArray[1][-3]) 
+                   
         traceArray1.append(splitArray[1][-2])
         traceArray1.append(splitArray[1][-1])   
         traceArray1.append(splitArray[0][0]) 
@@ -272,13 +305,14 @@ def saveCurrentPath(lpathArray):
         #print("Printing Trace Arrays")
         #print(traceArray)
 
-
+    
     for subArray in splitArray:
-        
-        subArray[0]="M"+subArray[0]
-        pathcoordinates=",".join(subArray) # create a comma seperated path string
-        pathcoordinates=pathcoordinates  #Adding a Z makes the path closed with the first point in the path
-        dwg.add(dwg.path( d=pathcoordinates, stroke="#000", fill="none", stroke_width=1))
+
+        if(len(subArray)>0):
+            subArray[0]="M"+subArray[0]
+            pathcoordinates=",".join(subArray) # create a comma seperated path string
+            pathcoordinates=pathcoordinates  #Adding a Z makes the path closed with the first point in the path
+            dwg.add(dwg.path( d=pathcoordinates, stroke="#000", fill="none", stroke_width=1))
 
 
     # Added Red lines for just tracing with a laser, no cut required. 
@@ -319,6 +353,11 @@ def saveCurrentPath(lpathArray):
 
 
 GcodeFile= open(filename+'.gcode', 'r')
+
+
+
+
+
 instructions = GcodeFile.readlines()
 count = 0
 
@@ -329,18 +368,22 @@ if not isExists:
    # Create a new directory because it does not exist
    os.makedirs(filename)
 
+ 
+metaDataFile=open(filename+"/"+filename+'.txt', 'w')
+
 boxPathString=calculateSmallestBoundingBoxExtents(instructions)
+
 #print(boxPathString)
 
 
 
 
-
+printEnded=False
 
 for instruction in instructions:
 
     layerMatch=re.match(layerMatchPattern, instruction)
-    if layerMatch:
+    if layerMatch and not printEnded:
         layerNumber=layerMatch.group(1)
         print ("Layer {} starts.".format(layerNumber))
 
@@ -378,7 +421,8 @@ for instruction in instructions:
             
             dwg = svgwrite.Drawing(filename+"/layer_"+layerNumber+'.svg') 
         patharray=[]
-        exit()
+        printEnded=True
+        break
 
 
     instructionMatch = re.match(instructionPattern, instruction)
@@ -412,17 +456,16 @@ for instruction in instructions:
             
             
         
-    else:
-        continue
+    
 
   
 
 
 
 
-
-
-
+#print(maxAreaLayer)
+metaDataFile.write("The Layer with the Max Area is {}\n". format(maxAreaLayer))
+metaDataFile.close()
 
 
 
