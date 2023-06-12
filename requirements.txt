@@ -1,2 +1,4 @@
-svgwrite=1.4.3
+svgwrite==1.4.3
 numpy
+BeautifulSoup4
+shapely==2.0.1

@@ -6,7 +6,9 @@ import math
 
 import numpy as np
 
-filename="HugeDragon" # just add the name of the file, not including the gcode extension
+from shapely import geometry
+
+filename="Triceratops" # just add the name of the file, not including the gcode extension
 
 #scaleFactor=3.543307 # see https://svgwrite.readthedocs.io/en/latest/overview.html#units
 scaleFactor=3.831070 # see https://svgwrite.readthedocs.io/en/latest/overview.html#units
@@ -14,6 +16,9 @@ largeAreaThreshold=1500 # if the enclosed area of the layer is less than this va
 smallAreaThreshold=100
 dwg=None
 boundingboxPath=None
+splitPathSwitch=False
+
+addBoundary=False
 
 lastX=200
 lastY=100
@@ -38,11 +43,16 @@ maxAreaLayer=0
 maxArea=0
 metaDataFile=None
 
+lastLayerAreas=[0]
+currentLayerAreas=[0]
+
+LayersWithCentroidOutside=[]
 
 
 
 
-instructionPattern = r'(G\d)\s(X[\d.]+)?\s(Y[\d.]+)?(\sE[\d.]+)?'
+
+instructionPattern = r'(G\d)\s(X[-?\d.]+)?\s(Y[-?\d.]+)?(\sE[\d.]+)?'
 layerMatchPattern = r";LAYER:(\d+)"
 printEndedPattern=r'M140 S0'
 
@@ -63,16 +73,57 @@ def scaleCoordinate(co):
 # using the coordinates of the layer, determine its weighted center. The layer number would be added there. 
 def findCentroid(lPathArray):
     #in the path array x and Y cocordinates come one after the other as such [x0,y0,x1,y1,x2,y2,x3,y3...]
-    lxsum=0
-    lysum=0
-    lpointcount=0
-    for i in range (2, len(lPathArray)-1, 2):
-        lxsum=lxsum+float(lPathArray[i])
-        lysum=lysum+float(lPathArray[i+1])
-        lpointcount=lpointcount+1
+    # lxsum=0
+    # lysum=0
+    # lpointcount=0
+    # areaCoordinates=[]
+    # for i in range (2, len(lPathArray)-1, 2):
+    #     lxsum=lxsum+float(lPathArray[i])
+    #     lysum=lysum+float(lPathArray[i+1])
+    #     areaCoordinates.append((float(lPathArray[i]),float(lPathArray[i+1])))
+    #     lpointcount=lpointcount+1
+    moveDistance=20
+    spokes=[]
+    spokes.append((moveDistance,0))
+    spokes.append((moveDistance*1.44, moveDistance*1.44))
+    spokes.append((0,moveDistance))
+    spokes.append((-moveDistance*1.44, moveDistance*1.44))
+
+    spokes.append((-moveDistance,0))
+    spokes.append((-moveDistance*1.44, -moveDistance*1.44))
+    spokes.append((0,-moveDistance))
+    spokes.append((moveDistance*1.44, -moveDistance*1.44))
+
+    areaCoordinates=[]
+    for i in range (2, len(lPathArray)-1, 2):        
+        areaCoordinates.append((float(lPathArray[i]),float(lPathArray[i+1])))
+        
+    
+
+    line = geometry.LineString(areaCoordinates)    
+    polygon = geometry.Polygon(line)
+    
+
+    centroid=polygon.centroid
+    point = geometry.Point(centroid)
+    pointStatus=polygon.contains(point)  and polygon.exterior.distance(point) > 30
+
+    if(not pointStatus):
+        for transformPoint in spokes:
+            newpoint=geometry.Point(transformPoint[0] + centroid.x,transformPoint[1] + centroid.y) 
+            pointStatus=polygon.contains(newpoint)  and polygon.exterior.distance(newpoint) > 30
+            if(pointStatus):
+                return newpoint.x, newpoint.y, pointStatus
+            else:
+                newpoint=None
+
+    return centroid.x, centroid.y, pointStatus
 
 
-    return lxsum/lpointcount, lysum/lpointcount
+     
+
+
+    
 
 
 
@@ -110,9 +161,9 @@ def calculateSmallestBoundingBoxExtents(linstructions):
     for linstruction in linstructions:
 
         linstruction=removeSpeedParameter(linstruction)
-
+        #print(linstruction)
         instructionMatch = re.match(instructionPattern, linstruction)
-
+        #print(instructionMatch)
         if instructionMatch:
             command=instructionMatch.group(1)
             xVal=instructionMatch.group(2)[1:]
@@ -220,7 +271,10 @@ def saveCurrentPath(lpathArray):
     # because if the area is too small, no point writing the layer number in it
     #print(patharray)
     area=computerArea(lpathArray)
-    global maxArea, maxAreaLayer
+    global maxArea, maxAreaLayer, currentLayerAreas, lastLayerAreas
+
+    if(area>0):
+        currentLayerAreas.append(math.floor(area))
     if(area>maxArea):
         maxArea=area
         maxAreaLayer=layerNumber
@@ -228,94 +282,98 @@ def saveCurrentPath(lpathArray):
     #     print ("Area is {} sq.mm .".format(area))
     #print (lpathArray)
     paths=len(lpathArray)
-     # the first corodinate is always a move and comes from a G0 command.
-    split=True
-    if(paths==2): # just a G0 command, we can dopuble the array in size to allow splitting it ahead in two parts
-        lpathArray=lpathArray*2
-        paths=len(lpathArray)
-        split=False
-        #print(paths)
+
+    if (splitPathSwitch):
+        # the first corodinate is always a move and comes from a G0 command.
+        split=True
+        if(paths==2): # just a G0 command, we can dopuble the array in size to allow splitting it ahead in two parts
+            lpathArray=lpathArray*2
+            paths=len(lpathArray)
+            split=False
+            #print(paths)
+        
+        
+        splitArray=[] 
+            
+
     
-    
-    splitArray=[] 
-        
+        splitArray=np.array_split(lpathArray, 2)
+        #print("**Printing Path Arrays")     
+        #print(lpathArray)
+        #print("**Printing Split Arrays")
+        #print(splitArray)
 
-   
-    splitArray=np.array_split(lpathArray, 2)
-    #print("**Printing Path Arrays")     
-    #print(lpathArray)
-    #print("**Printing Split Arrays")
-    #print(splitArray)
+        # when the array is split in two halves, if the number of elements in the parts is 
+        # odd, the XY combinations have to be even. Check if the number of elements in the split is odd.
+        #print("The Length of the Path Array is  {}".format(len(patharray)))
+        traceArray0=[]
+        traceArray1=[]
+        if(split):
 
-    # when the array is split in two halves, if the number of elements in the parts is 
-    # odd, the XY combinations have to be even. Check if the number of elements in the split is odd.
-    #print("The Length of the Path Array is  {}".format(len(patharray)))
-    traceArray0=[]
-    traceArray1=[]
-    if(split):
+            #If they are odd, just remove the first element from second part, and add it at the end of the first part. 
+            # To make a wider gap in the path, also ignore the first couple of XY coordinates in the second half. 
+            
+            
+            if(len(splitArray[0])%2==1):           
 
-        #If they are odd, just remove the first element from second part, and add it at the end of the first part. 
-        # To make a wider gap in the path, also ignore the first couple of XY coordinates in the second half. 
-        
-        
-        if(len(splitArray[0])%2==1):           
+                splitArray[0]=np.append(splitArray[0], splitArray[1][0]) # take the first element from second part and put at end of first
+                splitArray[1]=splitArray[1][1:] # 
 
-            splitArray[0]=np.append(splitArray[0], splitArray[1][0]) # take the first element from second part and put at end of first
-            splitArray[1]=splitArray[1][1:] # 
+                
 
+
+
+            
+            #print(splitArray)
+
+            if(len(splitArray[0])>2):
+                traceArray0.append(splitArray[0][-4])
+                traceArray0.append(splitArray[0][-3]) 
+
+            traceArray0.append(splitArray[0][-2])
+            traceArray0.append(splitArray[0][-1])   
+            traceArray0.append(splitArray[1][0]) 
+            traceArray0.append(splitArray[1][1])  
+
+            if(len(splitArray[1])>2):          
+                traceArray0.append(splitArray[1][2]) 
+                traceArray0.append(splitArray[1][3]) 
+
+            if(len(splitArray[1])>2):   
+                traceArray1.append(splitArray[1][-4])
+                traceArray1.append(splitArray[1][-3]) 
+                    
+            traceArray1.append(splitArray[1][-2])
+            traceArray1.append(splitArray[1][-1])   
+            traceArray1.append(splitArray[0][0]) 
+            traceArray1.append(splitArray[0][1])         
             
 
 
 
+            splitArray[0]=splitArray[0][:-2] # take the first element from second part and put at end of first
+            splitArray[1]=splitArray[1][2:] # 
+
+            #print("Printing Split Arrays after Manipulation")
+            #print("First Part of the split is {} elements long".format(len(splitArray[0])))
+            #print("Second Part of the split is {} elements long".format(len(splitArray[1])))
+            #print(splitArray[1])
+            #print("Printing Trace Arrays")
+            #print(traceArray)
+
         
-        print(splitArray)
+        for subArray in splitArray:
 
-        if(len(splitArray[0])>2):
-            traceArray0.append(splitArray[0][-4])
-            traceArray0.append(splitArray[0][-3]) 
-
-        traceArray0.append(splitArray[0][-2])
-        traceArray0.append(splitArray[0][-1])   
-        traceArray0.append(splitArray[1][0]) 
-        traceArray0.append(splitArray[1][1])  
-
-        if(len(splitArray[1])>2):          
-            traceArray0.append(splitArray[1][2]) 
-            traceArray0.append(splitArray[1][3]) 
-
-        if(len(splitArray[1])>2):   
-            traceArray1.append(splitArray[1][-4])
-            traceArray1.append(splitArray[1][-3]) 
-                   
-        traceArray1.append(splitArray[1][-2])
-        traceArray1.append(splitArray[1][-1])   
-        traceArray1.append(splitArray[0][0]) 
-        traceArray1.append(splitArray[0][1])         
-        
-
-
-
-        splitArray[0]=splitArray[0][:-2] # take the first element from second part and put at end of first
-        splitArray[1]=splitArray[1][2:] # 
-
-        #print("Printing Split Arrays after Manipulation")
-        #print("First Part of the split is {} elements long".format(len(splitArray[0])))
-        #print("Second Part of the split is {} elements long".format(len(splitArray[1])))
-        #print(splitArray[1])
-        #print("Printing Trace Arrays")
-        #print(traceArray)
+            if(len(subArray)>0):
+                subArray[0]="M"+subArray[0]
+                pathcoordinates=",".join(subArray) # create a comma seperated path string
+                pathcoordinates=pathcoordinates + 'Z'  #Adding a Z makes the path closed with the first point in the path
+                dwg.add(dwg.path( d=pathcoordinates, stroke="#000", fill="none", stroke_width=1))
 
     
-    for subArray in splitArray:
-
-        if(len(subArray)>0):
-            subArray[0]="M"+subArray[0]
-            pathcoordinates=",".join(subArray) # create a comma seperated path string
-            pathcoordinates=pathcoordinates  #Adding a Z makes the path closed with the first point in the path
-            dwg.add(dwg.path( d=pathcoordinates, stroke="#000", fill="none", stroke_width=1))
 
 
-    # Added Red lines for just tracing with a laser, no cut required. 
+    """ # Added Red lines for just tracing with a laser, no cut required. 
     if(len(traceArray0)>0):
         traceArray0[0]="M"+traceArray0[0]
         pathcoordinates=",".join(traceArray0) # create a comma seperated path string
@@ -326,12 +384,20 @@ def saveCurrentPath(lpathArray):
         traceArray1[0]="M"+traceArray1[0]
         pathcoordinates=",".join(traceArray1) # create a comma seperated path string
         pathcoordinates=pathcoordinates  #Adding a Z makes the path closed with the first point in the path
-        dwg.add(dwg.path( d=pathcoordinates, stroke="#F00", fill="none", stroke_width=1))
+        dwg.add(dwg.path( d=pathcoordinates, stroke="#F00", fill="none", stroke_width=1)) """
 
-        
+    if (not splitPathSwitch): 
+        lpathArray[0]="M"+lpathArray[0]
+        pathcoordinates=",".join(lpathArray) # create a comma seperated path string
+        pathcoordinates=pathcoordinates + 'Z'  #Adding a Z makes the path closed with the first point in the path
+        dwg.add(dwg.path( d=pathcoordinates, stroke="#000", fill="none", stroke_width=1))
+    
     
     if(area > largeAreaThreshold): # only add text if area is above the threashold. 
-        centroidx, centroidy=findCentroid(lpathArray) # computer the weighted center of the enclosed path
+        centroidx, centroidy, positionStatus=findCentroid(lpathArray) # compute the weighted center of the enclosed path
+
+        if(not positionStatus):
+            LayersWithCentroidOutside.append(layerNumber)
 
         dwg.add(dwg.text(layerNumber,insert=(centroidx,centroidy), # add the text at the weighted center
                 stroke='#F00',
@@ -394,9 +460,23 @@ for instruction in instructions:
 
              saveCurrentPath(patharray) 
              #print(boxPathString)             
-             dwg.add(dwg.path( d=boxPathString, stroke="#000", fill="none", stroke_width=1))
-             dwg.save()  
-               
+             if(addBoundary):
+                dwg.add(dwg.path( d=boxPathString, stroke="#000", fill="none", stroke_width=1))
+                dwg.save() 
+        
+        
+        currentLayerAreas.sort()
+        if(int(layerNumber)>0):
+            curr_largestArea=currentLayerAreas[-1]
+            last_largestArea=lastLayerAreas[-1]
+            if(curr_largestArea>last_largestArea): # The largest Area in current layer is larger than largest area in last layer
+                # in the metadata file, write the layer number with larger area first, then smaller area.
+                # The outline of the smaller area needs to be imprinted on the larger area.
+                metaDataFile.write("#{},{}\n".format(int(layerNumber), int(layerNumber)-1))
+            else:
+                 metaDataFile.write("#{},{}\n".format(int(layerNumber)-1, int(layerNumber)))
+            lastLayerAreas=currentLayerAreas
+        currentLayerAreas=[]     
         dwg = svgwrite.Drawing(filename+"/layer_"+layerNumber+'.svg')        
         patharray=[]
         layerStarted=True  
@@ -415,9 +495,26 @@ for instruction in instructions:
         # Draw an irregular polygon
         if(len(patharray)>0):
             saveCurrentPath(patharray)
-            #print(boxPathString)             
-            dwg.add(dwg.path( d=boxPathString, stroke="#000", fill="none", stroke_width=1))
-            dwg.save() 
+            #print(boxPathString)    
+            # 
+            if(addBoundary):
+                dwg.add(dwg.path( d=boxPathString, stroke="#000", fill="none", stroke_width=1))
+                dwg.save()
+
+
+            currentLayerAreas.sort()
+            if(int(layerNumber)>0):
+                curr_largestArea=currentLayerAreas[-1]
+                last_largestArea=lastLayerAreas[-1]
+                if(curr_largestArea>last_largestArea): # The largest Area in current layer is larger than largest area in last layer
+                    # in the metadata file, write the layer number with larger area first, then smaller area.
+                    # The outline of the smaller area needs to be imprinted on the larger area.
+                    metaDataFile.write("#{},{}\n".format(int(layerNumber), int(layerNumber)-1))
+                else:
+                        metaDataFile.write("#{},{}\n".format(int(layerNumber)-1, int(layerNumber)))
+                lastLayerAreas=currentLayerAreas
+                currentLayerAreas=[]               
+           
             
             dwg = svgwrite.Drawing(filename+"/layer_"+layerNumber+'.svg') 
         patharray=[]
@@ -443,8 +540,10 @@ for instruction in instructions:
             patharray.append(yVal)  
 
             saveCurrentPath(patharray)
-            dwg.add(dwg.path( d=boxPathString, stroke="#000", fill="none", stroke_width=1))
-            dwg.save() 
+
+            if(addBoundary):
+                dwg.add(dwg.path( d=boxPathString, stroke="#000", fill="none", stroke_width=1))
+                dwg.save() 
             patharray=[]
             
 
@@ -455,16 +554,13 @@ for instruction in instructions:
             patharray.append(yVal)
             
             
-        
-    
-
-  
-
 
 
 
 #print(maxAreaLayer)
 metaDataFile.write("The Layer with the Max Area is {}\n". format(maxAreaLayer))
+
+metaDataFile.write("The following Layers {} Have their centroid outside the region".format(LayersWithCentroidOutside))
 metaDataFile.close()
 
 
