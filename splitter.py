@@ -8,7 +8,7 @@ import numpy as np
 
 from shapely import geometry
 
-filename="Triceratops" # just add the name of the file, not including the gcode extension
+filename="LionLarge" # just add the name of the file, not including the extension
 
 #scaleFactor=3.543307 # see https://svgwrite.readthedocs.io/en/latest/overview.html#units
 scaleFactor=3.831070 # see https://svgwrite.readthedocs.io/en/latest/overview.html#units
@@ -48,6 +48,11 @@ currentLayerAreas=[0]
 
 LayersWithCentroidOutside=[]
 
+xOffset=0
+yOffset=0
+
+manualXOffset=14.32
+manualYOffset=43.143
 
 
 
@@ -67,8 +72,20 @@ def removeSpeedParameter(linstruction):
 
 
 
-def scaleCoordinate(co):
-    return str(float(co)*scaleFactor)
+def scaleandShiftCoordinate(co, axis):
+    global xOffset, yOffset
+
+    scaled=float(co)*scaleFactor
+
+    if(axis=="x"):
+
+        shifted=scaled+xOffset
+
+    if(axis=="y"):
+
+        shifted=scaled+yOffset
+
+    return str(shifted)
 
 # using the coordinates of the layer, determine its weighted center. The layer number would be added there. 
 def findCentroid(lPathArray):
@@ -143,6 +160,77 @@ def computerArea(lpathArray):
     totalArea=areaDelta/2
 
     return totalArea
+
+
+def computeOffsetFromOrigin(linstructions):
+
+    lshapeMaxX=0
+    lshapeMinX=1000
+    lshapeMaxY=0
+    lshapeMinY=1000
+
+    for linstruction in linstructions:
+
+        linstruction=removeSpeedParameter(linstruction)
+        #print(linstruction)
+        instructionMatch = re.match(instructionPattern, linstruction)
+        #print(instructionMatch)
+        if instructionMatch:
+            command=instructionMatch.group(1)
+            xVal=instructionMatch.group(2)[1:]
+            yVal=instructionMatch.group(3)[1:]
+            eVal=instructionMatch.group(4)
+
+            xVal=float(xVal)
+            yVal=float(yVal)
+
+            
+
+            
+
+            if( command=="G1"):
+
+                if(xVal>lshapeMaxX):
+                    lshapeMaxX=xVal;
+                if(xVal<lshapeMinX):
+                    lshapeMinX=xVal
+                if(yVal>lshapeMaxY):
+                    lshapeMaxY=yVal;
+                if(yVal<lshapeMinY):
+                    lshapeMinY=yVal;
+        
+            
+
+
+        boundingBoxWidthmm=math.ceil(lshapeMaxX-lshapeMinX)
+        boundingBoxHeightmm=math.ceil(lshapeMaxY-lshapeMinY)
+
+        boundingBoxWidthin=math.ceil(boundingBoxWidthmm/25.4)
+        boundingBoxHeightin=math.ceil(boundingBoxHeightmm/25.4)
+
+        # boundingBoxWidthmm=lshapeMaxX-lshapeMinX
+        # boundingBoxHeightmm=lshapeMaxY-lshapeMinY
+
+        # boundingBoxWidthin=boundingBoxWidthmm/25.4
+        # boundingBoxHeightin=boundingBoxHeightmm/25.4
+
+
+        
+        
+        printEndedMatch=re.match(printEndedPattern, linstruction)
+
+        if printEndedMatch: # This is the Exit condition, as the end of the print has been reached
+            global xOffset, yOffset, manualXOffset, manualYOffset
+
+            xOffset=(lshapeMinX*scaleFactor * -1)+ manualXOffset
+            yOffset=(lshapeMinY*scaleFactor * -1)+ manualYOffset
+
+
+            #print("{},{},{},{}".format(lshapeMinX*scaleFactor,lshapeMinY*scaleFactor,lshapeMaxX*scaleFactor,lshapeMaxY*scaleFactor))
+
+           
+
+
 
 
 
@@ -243,7 +331,13 @@ def calculateSmallestBoundingBoxExtents(linstructions):
             #print(lpathArray)
             #print(len(lpathArray))
             for i in range(0,len(lpathArray)):
-                lpathArray[i]=scaleCoordinate(lpathArray[i])
+
+                if(i%2==0):
+                    lpathArray[i]=scaleandShiftCoordinate(lpathArray[i], "x")
+                
+                if(i%2==1):
+                    lpathArray[i]=scaleandShiftCoordinate(lpathArray[i], "y")
+
             lpathArray[0]="M"+lpathArray[0] # the first corodinate is always a move and comes from a G0 command.
 
             lpathcoordinates=",".join(lpathArray) # create a comma seperated path string
@@ -271,7 +365,7 @@ def saveCurrentPath(lpathArray):
     # because if the area is too small, no point writing the layer number in it
     #print(patharray)
     area=computerArea(lpathArray)
-    global maxArea, maxAreaLayer, currentLayerAreas, lastLayerAreas
+    global maxArea, maxAreaLayer, currentLayerAreas, lastLayerAreas, xOffset, yOffset
 
     if(area>0):
         currentLayerAreas.append(math.floor(area))
@@ -282,6 +376,9 @@ def saveCurrentPath(lpathArray):
     #     print ("Area is {} sq.mm .".format(area))
     #print (lpathArray)
     paths=len(lpathArray)
+
+    
+
 
     if (splitPathSwitch):
         # the first corodinate is always a move and comes from a G0 command.
@@ -439,6 +536,13 @@ metaDataFile=open(filename+"/"+filename+'.txt', 'w')
 
 boxPathString=calculateSmallestBoundingBoxExtents(instructions)
 
+
+#print("{},{}".format(xOffset, yOffset))
+
+computeOffsetFromOrigin(instructions)
+
+#print("{},{}".format(xOffset, yOffset))
+#exit()
 #print(boxPathString)
 
 
@@ -529,8 +633,10 @@ for instruction in instructions:
         yVal=instructionMatch.group(3)[1:]
         eVal=instructionMatch.group(4)
 
-        xVal=scaleCoordinate(xVal)
-        yVal=scaleCoordinate(yVal)
+        xVal=scaleandShiftCoordinate(xVal, "x")
+        yVal=scaleandShiftCoordinate(yVal, "y")
+
+        
 
         if(command=="G0" and  layerStarted):
             #print("Adding")
